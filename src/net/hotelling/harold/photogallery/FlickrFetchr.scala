@@ -11,6 +11,9 @@ import java.util.ArrayList
 import org.xmlpull.v1.XmlPullParserFactory
 import java.io.StringReader
 import org.xmlpull.v1.XmlPullParserException
+import scala.util.Try
+import scala.util.Failure
+import scala.util.Success
 
 case class GalleryItem(val caption: String, val id: String, val url: String)
 
@@ -28,15 +31,16 @@ object FlickrFetchr {
 class FlickrFetchr {
   import FlickrFetchr._
 
-  def getUrlBytes(urlSpec: String): Either[Array[Byte], IOException] = {
+  def getUrlBytes(urlSpec: String): Try[Array[Byte]] = {
     val url = new URL(urlSpec)
     val conn = url.openConnection().asInstanceOf[HttpURLConnection]
-    try {
-      val out = new ByteArrayOutputStream()
-      val in = conn.getInputStream()
-      if (conn.getResponseCode() != HttpURLConnection.HTTP_OK) {
-        Right(new IOException(""))
-      } else {
+    Try {
+      try {
+        val out = new ByteArrayOutputStream()
+        val in = conn.getInputStream()
+        if (conn.getResponseCode != HttpURLConnection.HTTP_OK) {
+          throw new IOException("Bad HTTP status code: " + conn.getResponseCode)
+        }
         var bytesRead = 0
         val buffer: Array[Byte] = new Array[Byte](1024)
         def readBlock() = bytesRead = in.read(buffer)
@@ -46,16 +50,14 @@ class FlickrFetchr {
           readBlock()
         }
         out.close()
-        Left(out.toByteArray)
+        out.toByteArray
+      } finally {
+        conn.disconnect()
       }
-    } catch {
-      case ioe: IOException => Right(ioe)
-    } finally {
-      conn.disconnect()
     }
   }
 
-  def getUrl(urlSpec: String): Either[String, IOException] = getUrlBytes(urlSpec).left map { new String(_) }
+  def getUrl(urlSpec: String): Try[String] = getUrlBytes(urlSpec) map { new String(_) }
 
   def fetchItems(): ArrayList[GalleryItem] = {
     val url = Uri.parse(ENDPOINT).buildUpon()
@@ -65,7 +67,7 @@ class FlickrFetchr {
       .build().toString()
     val items = new ArrayList[GalleryItem]()
     getUrl(url) match {
-      case Left(xml) => {
+      case Success(xml) => {
         Log.i(TAG, s"Received XML: $xml")
         val parser = XmlPullParserFactory.newInstance.newPullParser
         parser.setInput(new StringReader(xml))
@@ -75,7 +77,7 @@ class FlickrFetchr {
           case e: XmlPullParserException => Log.e(TAG, s"Failed to parse xml: $xml", e)
         }
       }
-      case Right(ioe) => Log.e(TAG, "Failed to fetch items", ioe)
+      case Failure(ioe) => Log.e(TAG, "Failed to fetch items", ioe)
     }
     items
   }
